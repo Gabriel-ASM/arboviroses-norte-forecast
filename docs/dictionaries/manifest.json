@@ -1,0 +1,35 @@
+﻿[
+    {
+        "disease":  "dengue",
+        "file":  "dic_dados_dengue.pdf",
+        "publisher":  "Ministério da Saúde / Sinan",
+        "dataset_url":  "https://dadosabertos.saude.gov.br/dataset/arboviroses-dengue",
+        "download_url":  "https://s3.sa-east-1.amazonaws.com/ckan.saude.gov.br/SINAN/Dengue/dic_dados_dengue.pdf",
+        "retrieved_on":  "2026-10-12",
+        "catalog_dictionary_update":  "2025-07-14",
+        "bytes":  387274,
+        "sha256":  "d15122f38b32c4b3caf58cca7e717065b24c888771ecad8e7a3ed02e0efd16a1"
+    },
+    {
+        "disease":  "chikungunya",
+        "file":  "dic_dados_chikungunya.pdf",
+        "publisher":  "Ministério da Saúde / Sinan",
+        "dataset_url":  "https://dadosabertos.saude.gov.br/dataset/arboviroses-febre-de-chikungunya",
+        "download_url":  "https://s3.sa-east-1.amazonaws.com/ckan.saude.gov.br/SINAN/Chikungunya/dic_dados_chikungunya.pdf",
+        "retrieved_on":  "2026-10-12",
+        "catalog_dictionary_update":  "2025-07-14",
+        "bytes":  491513,
+        "sha256":  "80ff2e1d8c64cb14e9e4e915da373f179fb5584674d3240f810522b7414bb222"
+    },
+    {
+        "disease":  "zika",
+        "file":  "dic_dados_zika.pdf",
+        "publisher":  "Ministério da Saúde / Sinan",
+        "dataset_url":  "https://dadosabertos.saude.gov.br/dataset/arboviroses-zika-virus",
+        "download_url":  "https://s3.sa-east-1.amazonaws.com/ckan.saude.gov.br/SINAN/Zikavirus/dic_dados_zika.pdf",
+        "retrieved_on":  "2026-10-12",
+        "catalog_dictionary_update":  "2025-07-14",
+        "bytes":  333298,
+        "sha256":  "80b50522c67f550ee2c96aad315dddd524bf38b1c7fa1c40b2ee341cc41cdf0d"
+    }
+]

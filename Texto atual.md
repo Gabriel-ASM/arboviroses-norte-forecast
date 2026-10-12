@@ -1,0 +1,13 @@
+﻿# Proposta metodológica
+
+Este projeto propõe desenvolver um modelo de previsão da ocorrência de dengue, chikungunya e zika nos estados da Região Norte do Brasil, utilizando registros do Sistema de Informação de Agravos de Notificação (Sinan), disponibilizados pelo Ministério da Saúde. A análise abrangerá Acre, Amapá, Amazonas, Pará, Rondônia, Roraima e Tocantins. Inicialmente, serão estimadas contagens semanais de casos por município de residência, com horizontes de uma a quatro semanas e possibilidade de agregação por estado.
+
+A preparação dos dados começará pela análise dos dicionários oficiais e pela verificação da cobertura histórica e da consistência dos registros. Serão definidos critérios para identificação dos agravos, classificação dos casos, tratamento de valores ausentes e compatibilização dos códigos municipais. A engenharia de atributos priorizará o histórico de casos, a sazonalidade e a localização geográfica, considerando apenas informações disponíveis na data de emissão de cada previsão.
+
+O estudo adotará uma divisão temporal: os dados históricos até 2024 serão destinados ao treinamento, os de 2025 à validação e os de 2026 ao teste reservado. A seleção de variáveis, os ajustes de pré-processamento e a escolha dos modelos respeitarão essa separação. Também serão considerados os atrasos de notificação e as revisões dos registros, pois a divisão por ano, isoladamente, não garante a ausência de vazamento de informação. Enquanto 2026 não estiver encerrado e consolidado, sua avaliação será apresentada como parcial.
+
+A implementação será realizada em Python, utilizando PyTorch para os modelos neurais. O desenvolvimento partirá de métodos de referência simples e avançará para modelos capazes de representar padrões temporais compartilhados entre municípios. A arquitetura e os hiperparâmetros serão selecionados com base no desempenho de validação, sem utilizar o conjunto de teste para orientar essas escolhas.
+
+A avaliação contemplará os erros das contagens previstas, a qualidade dos intervalos preditivos e as diferenças de desempenho entre doenças, municípios e horizontes. Os resultados deverão explicitar as limitações de cobertura, subnotificação e atualização das bases. O código, a documentação das fontes e os procedimentos necessários à reprodução dos experimentos serão organizados no repositório [arboviroses-norte-forecast](https://github.com/Gabriel-ASM/arboviroses-norte-forecast).
+
+Nesta etapa, foram preparados o plano de trabalho e a análise preliminar dos dicionários. O download dos registros epidemiológicos, a implementação, o treinamento e a avaliação dos modelos serão realizados nas etapas seguintes.
