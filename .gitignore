@@ -17,6 +17,11 @@ __pycache__/
 .venv/
 venv/
 .pytest_cache/
+.ruff_cache/
+.coverage
+build/
+dist/
+*.egg-info/
 .ipynb_checkpoints/
 .env
 .env.*

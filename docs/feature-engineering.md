@@ -1,55 +1,54 @@
 # Campos e engenharia de atributos
 
-Análise preliminar dos três dicionários oficiais obtidos em 12/10/2026. Nomes aparecem em minúsculas nos PDFs; normalizar nomes recebidos e conferir esquema por ano. Não foram medidas completude, correlação ou importância preditiva sem os dados.
+Análise preliminar dos dicionários oficiais obtidos em 12/10/2026. O pipeline normaliza nomes de colunas e valida os campos essenciais a cada arquivo anual. Presença documentada não garante cobertura uniforme entre anos.
 
-## Matriz de decisão
+## Campos utilizados
 
-| Campo | Uso | Regra |
+| Campo | Uso implementado | Regra |
 | --- | --- | --- |
-| `tp_not` | Seleção de notificações individuais | Código 2 nos três PDFs; conferir exportação |
-| `id_agravo` | Identificação da doença | Conferir CID e origem do arquivo |
-| `dt_sin_pri`, `sem_pri` | Eixo temporal do alvo | Evento não equivale à disponibilidade |
-| `dt_notific`, `sem_not`, `nu_ano` | Auditoria e alvo alternativo | Ano de notificação pode diferir do ano de sintomas |
-| `sg_uf`, `id_mn_resi` | Recorte e agrupamento | Residência; códigos como texto |
-| `sg_uf_not`, `id_municip` | Fluxo de notificação | Não substituir residência silenciosamente |
-| `classi_fin` | Definição do desfecho | Versionar mapeamento; nunca atributo de caso futuro |
-| `criterio` | Sensibilidade da definição | Não compartilhar códigos entre doenças sem conferência |
-| `dt_digita` | Proxy de primeira entrada | Não captura revisões nem publicação no portal |
-| `dt_encerra` | Maturação | Não simular conhecimento passado com encerramento futuro |
-| `nu_idade_n` | Composição histórica opcional | Idade codificada com unidade; não interpretar diretamente como anos |
-| `cs_sexo` | Composição histórica opcional | Preservar ignorados; somente agregados já conhecidos |
-| `evolucao`, `dt_obito` | Desfechos secundários | Excluir dos preditores iniciais |
+| `tp_not` | Selecionar ficha individual | Incluir `2`; outras categorias não entram como casos individuais |
+| `id_agravo` | Auditoria da doença | Conferir código do agravo e o arquivo de origem |
+| `sem_pri` | Semana do alvo | Referência principal para ano e semana epidemiológica |
+| `dt_sin_pri` | Alternativa temporal e auditoria | Usar quando `sem_pri` não puder ser interpretada |
+| `id_mn_resi` | Município do alvo | Campo de residência, não município de atendimento/notificação |
+| `sg_uf` | Auditoria geográfica | O recorte principal deriva o estado do código municipal de residência |
+| `classi_fin` | Definição do caso | Provável: excluir código `2` (descartado); confirmado: incluir código `1` |
+| `nduplic_n` | Duplicidade sinalizada | Excluir código `2`, quando o campo existe |
+| `dt_notific`, `sem_not`, `nu_ano` | Diagnóstico temporal | Datas de notificação; não substituem a data de sintomas |
+| `dt_digita` | Diagnóstico de atraso | Primeira inclusão, não histórico completo de revisão |
+| `dt_encerra` | Análise de maturação | Não usar como preditor de caso futuro |
+| `nu_idade_n`, `cs_sexo` | Análise descritiva futura | Não entram no MVP; dados de paciente futuro não são conhecidos na origem |
+| `evolucao`, `dt_obito` | Desfecho secundário futuro | Excluir dos preditores iniciais |
 
-Características do paciente futuro não são entradas conhecidas da previsão municipal. Proporções demográficas históricas só entram após avaliar cobertura e ganho. Campos clínicos, exames, internação e encerramento ficam fora do MVP pela disponibilidade tardia e heterogeneidade.
+Os registros que entram no alvo principal devem satisfazer `tp_not=2`, residência em estado do Norte, `classi_fin != 2` e, se `nduplic_n` estiver disponível, `nduplic_n != 2`. Em branco, 0, 8 ou 9 não são convertidos em descartados. Essa regra operacionaliza a nota dos catálogos para casos prováveis, mas deve ser confrontada com a codificação real de cada ano e com os totais oficiais antes de interpretar os resultados. A alternativa confirmada usa `classi_fin=1`.
 
-## Inconsistência documental a resolver
+## Distinção entre campos de classificação
 
-Dengue (p. 12) e chikungunya (p. 11) apresentam em `classi_fin`: 1=confirmado, 2=descartado, 8=inconclusivo e branco/0/9=ignorado. Entretanto, regras próximas referem-se a “Classificação=13 Chikungunya”. O catálogo de dengue também menciona categorias clínicas específicas. Portanto, não assumir codificação uniforme em toda a série.
+`classi_fin` é a classificação final do caso e os dicionários atuais listam 1=confirmado, 2=descartado, 8=inconclusivo e branco/0/9=ignorado (com pequenas diferenças entre formulários). A menção “Classificação=13 Chikungunya” próxima ao campo `clinic_chik`/`clinc_chik` refere-se ao campo de classificação clínica específico do formulário, não ao valor 13 de `classi_fin`. A leitura anterior que tratava isso como inconsistência de `classi_fin` estava incorreta e foi corrigida.
 
-Zika (p. 6) apresenta 1=confirmado, 2=descartado e 9=ignorado. Em `criterio`, zika lista 3=em investigação, enquanto dengue/chikungunya listam 3=clínico. Um recodificador compartilhado sem versão produziria erros.
+`criterio` também é específico por formulário: por exemplo, o código 3 pode indicar “em investigação” no dicionário de zika e “clínico” em dengue/chikungunya. Não compartilhar recodificadores entre doenças sem validar ano, nome de campo e origem.
 
-Na ingestão, levantar valores por doença/ano, conferir documentação histórica e resolver divergências com fontes oficiais antes de gerar o alvo. Criar mapeamento versionado. Códigos desconhecidos devem bloquear a geração até decisão explícita. Nulos/ignorados não são automaticamente descartados nem confirmados. Documentar o tratamento de inconclusivos e ignorados na definição de casos prováveis.
+`nduplic_n` indica duplicidades identificadas no sistema; o valor 2 significa duplicidade que não deve ser contada. O pipeline exclui essa categoria quando o campo existe e registra quando o campo falta. Ele não tenta identificar duplicidade por combinações de município, data e idade.
 
-## Atributos derivados
+## Campos de saída e disponibilidade
 
-Na origem `t`, usar somente o conjunto disponível até `t`. Definir a semana mais recente utilizável conforme atraso/maturidade; registrar sua distância até o alvo. Uma observação atrasada várias semanas não deve ser chamada de última semana observada sem indicar a defasagem.
+O painel preparado contém `disease`, `municipality_code`, `uf`, `epi_year`, `epi_week` e `cases`. Os códigos de município Sinan são preservados com seis dígitos; a referência territorial do IBGE conserva o identificador oficial de sete dígitos e o nome municipal. A semana epidemiológica brasileira começa no domingo e termina no sábado; o código de semana fornecido pelo Sinan tem precedência sobre o cálculo por data.
 
-- Contagens defasadas em 1, 2, 3, 4, 8, 12, 26 e 52 semanas; `log1p` opcional na entrada, alvo na escala de contagem.
-- Médias/somas de 4, 8 e 12 semanas, deslocadas antes do cálculo e com máscaras de cobertura.
-- Diferenças absolutas de janelas para tendência; evitar razões com denominador zero.
-- Calendário futuro conhecido, com tratamento de semana 53.
-- Embeddings de município/UF, categoria desconhecida e fallback documentado.
-- Máscaras de ausência e quantidade de semanas observadas.
+O MLP usa 52 contagens municipais até a semana `origem - lag`, totais estaduais nas janelas de 1, 4, 12 e 52 semanas até o mesmo corte, indicadores da UF, atributos cíclicos para as quatro semanas futuras e embedding municipal. O vocabulário municipal do embedding é formado somente com municípios que têm casos até 2024; demais municípios usam uma categoria compartilhada, evitando criar parâmetros treinados apenas com ocorrências de validação/teste. O contexto estadual permite que municípios sem casos no treino recebam informação temporal das outras localidades do estado. Quando disponível, o cadastro IBGE permite incluir municípios sem qualquer caso observado no painel.
 
-Não interpolar com futuro nem padronizar usando a série completa. Modelos globais compartilham informação entre municípios; ainda assim, informar quando o histórico local for insuficiente.
+## Defasagens e validação
 
-## Páginas dos originais
+O atraso padrão é oito semanas. Para uma origem `t`, a entrada termina em `t-8`, enquanto os alvos são `t+1` a `t+4`. Isso preserva o horizonte futuro sem tratar semanas recentes como completas, mas o atraso é apenas aproximação: os recursos públicos atuais não reconstroem todas as versões históricas dos casos.
+
+Todo agregado usa semanas anteriores à origem. Não se interpolam semanas futuras. O painel considera zero a ausência de registros somente dentro de anos cujos recursos foram ingeridos em sequência. Uma lacuna de arquivo anual bloqueia a preparação para evitar que ausência de cobertura vire zero. O número de semanas de maturidade é informado nas métricas.
+
+## Referências nos PDFs locais
 
 | Conteúdo | Dengue | Chikungunya | Zika |
 | --- | --- | --- | --- |
-| Idade codificada | 3 | 3 | 3 |
-| Município de residência | 5 | 5 | 5 |
-| Classificação final | 12 | 11 | 6 |
-| Primeira digitação | 21 | 19 | 8 |
+| Idade codificada | p. 3 | p. 3 | p. 3 |
+| Município de residência | p. 5 | p. 5 | p. 5 |
+| Classificação final | p. 12 | p. 11 | p. 6 |
+| Duplicidade | p. 21 | p. 18 | p. 5 |
 
-Ver [originais e manifesto](dictionaries/README.md). A inspeção orienta o esquema; utilidade preditiva será medida em backtests e ablações.
+Veja os [originais e o manifesto](dictionaries/README.md). A inspeção dos dicionários orienta o esquema; utilidade preditiva e comparabilidade serão verificadas com os arquivos anuais.

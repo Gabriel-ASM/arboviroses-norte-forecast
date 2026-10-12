@@ -1,3 +1,6 @@
-Zika : https://dadosabertos.saude.gov.br/dataset/arboviroses-zika-virus
-Dengue : https://dadosabertos.saude.gov.br/dataset/arboviroses-dengue
-Chikungunha : https://dadosabertos.saude.gov.br/dataset/arboviroses-febre-de-chikungunya
+Dengue: https://dadosabertos.saude.gov.br/dataset/arboviroses-dengue
+Chikungunya: https://dadosabertos.saude.gov.br/dataset/arboviroses-febre-de-chikungunya
+Zika: https://dadosabertos.saude.gov.br/dataset/arboviroses-zika-virus
+Calendário epidemiológico Sinan: https://www.portalsinan.saude.gov.br/calendario-epidemiologico/
+Municípios IBGE: https://servicodados.ibge.gov.br/api/v1/localidades/estados/15/municipios?orderBy=id
+PyTorch NegativeBinomial: https://docs.pytorch.org/docs/stable/distributions.html#negativebinomial
