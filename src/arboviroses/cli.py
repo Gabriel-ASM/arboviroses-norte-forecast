@@ -129,7 +129,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "fit":
-            from .training import fit_disease, write_skill_summary
+            from .training import fit_disease, write_wape_summary
 
             reports = []
             for disease in args.diseases:
@@ -148,7 +148,7 @@ def main(argv: list[str] | None = None) -> int:
                         start_year=args.start_year,
                     )
                 )
-            summary_path = write_skill_summary(reports, args.output_dir)
+            summary_path = write_wape_summary(reports, args.output_dir)
             print(f"Resumo: {summary_path}")
             return 0
 

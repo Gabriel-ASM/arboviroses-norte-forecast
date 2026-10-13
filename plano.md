@@ -14,7 +14,7 @@ A escolha do objetivo operacional deve preceder a próxima comparação: estimar
 - O painel final contém 450 municípios do Norte e contagens semanais para a definição operacional de casos prováveis. A classificação é específica por doença; categorias de dengue e chikungunya não são intercambiadas.
 - O MLP global em PyTorch prevê a distribuição binomial negativa de cada doença. As entradas usam 52 semanas de contagens municipais, resumos estaduais, UF, calendário cíclico e embedding municipal; o corte de entrada fica oito semanas antes da origem.
 - Sempre zero, persistência, média móvel de quatro semanas e sazonalidade de 52 semanas servem como referências. A avaliação inclui backtests em 2022–2024, validação em 2025 e teste parcial em 2026.
-- O MLP continua treinado pela NLL binomial negativa; a época agora é selecionada pelo MAE da mediana prevista na validação de 2025. O resumo apresenta, por doença, a redução percentual do MAE frente à referência escolhida nos backtests de 2022–2024.
+- O MLP é treinado principalmente com perda absoluta normalizada pelo volume observado no treino, priorizando WAPE; a NLL binomial negativa tem peso auxiliar de 0,05. A época é selecionada pela WAPE da contagem esperada na validação de 2025. O resumo mostra diretamente a WAPE no teste, por doença, e mantém “sempre zero” como referência de 100%.
 - As correções desta execução incluem parsing separado para datas ISO e brasileiras, classificação de `CLASSI_FIN` por doença, exclusão de residências sem correspondência municipal, normalização correta do WIS, agregação ponderada da NLL entre lotes e rastreabilidade entre painel, preparação, fontes e checkpoint.
 
 O WIS agora usa o denominador `K + 0,5`, com `K` intervalos centrais. A NLL de validação é ponderada pelo total de alvos válidos, em vez de atribuir o mesmo peso a lotes de tamanhos diferentes. Métricas devem ser lidas do relatório da execução retreinada, pois valores de versões anteriores não são diretamente comparáveis.
@@ -45,7 +45,7 @@ O WIS agora usa o denominador `K + 0,5`, com `K` intervalos centrais. A NLL de v
 Comparar todos os candidatos nos mesmos municípios, origens, alvos, horizontes e snapshots. Publicar métricas gerais e por horizonte, UF, escala histórica da localidade e períodos de aumento, sem formar grupos a partir do resultado futuro na avaliação de seleção.
 
 - **Erro de contagem:** MAE da média e da mediana, RMSE e viés. A média responde ao objetivo quadrático e compõe totais esperados; a mediana é o resumo apropriado para perda absoluta.
-- **Erro relativo ao volume:** WAPE por grupo, com aviso explícito quando a soma observada for zero; MASE somente com escala sazonal calculada no treino.
+- **Erro relativo ao volume:** WAPE geral, por horizonte, UF e grupo, com aviso explícito quando a soma observada for zero; MASE somente com escala sazonal calculada no treino. WAPE acima de 100% é possível e indica erro maior que o controle sempre zero no mesmo recorte.
 - **Ocorrência:** Brier e calibração para `P(Y > 0)`. Precisão, sensibilidade e falsos alertas usam limites escolhidos na validação.
 - **Eventos e picos:** probabilidade de ultrapassar limiares definidos antes da avaliação, detecção de aumentos e erro de magnitude nos picos.
 - **Distribuição:** WIS, cobertura e largura dos intervalos. Uma cobertura alta sem considerar a largura pode premiar intervalos pouco informativos.

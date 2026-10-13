@@ -1,26 +1,42 @@
-# Resultados do retreino e índice de erro por doença
+# Resultados do retreino orientado por WAPE
 
-Execução local em 12/10/2026. Os arquivos de dados, checkpoints, previsões completas e relatórios detalhados ficam em `data/` e `outputs/`, ignorados pelo Git. Esta página registra o novo critério de seleção e os resultados do retreino.
+Execução local em 12/10/2026, usando os dados, painel e arquivos brutos já presentes no repositório. O ajuste gerou novos checkpoints e previsões, sem baixar dados. Os artefatos completos ficam em `outputs/`, fora do Git.
 
-## Um número por doença
+## O que significa a porcentagem
 
-O resumo principal é a **redução do erro absoluto médio (MAE) frente a uma referência simples**. A referência escolhida para cada doença foi “sempre prever zero”, que teve o menor MAE agregado nos backtests de 2022–2024. Ela funciona como controle de séries esparsas; não é uma recomendação para vigilância operacional.
+A métrica principal é a **WAPE** (*weighted absolute percentage error*):
 
-| Doença | Redução do MAE | MAE do MLP | MAE de “sempre zero” |
+`WAPE (%) = 100 × soma(|casos observados − casos previstos|) / soma(casos observados)`
+
+O cálculo usa a contagem esperada (`mu`, campo `expected_cases`) em cada par de previsão. Para este recorte, prever sempre zero tem WAPE de 100%. Assim, 86,5% indica que a soma dos erros absolutos é 86,5% do volume observado; 100,5% indica erro total ligeiramente maior que o controle sempre zero. A WAPE não é o percentual de municípios errados, nem o percentual de previsões corretas, e pode passar de 100%.
+
+| Doença | WAPE do modelo | WAPE de sempre zero | Diferença para sempre zero | MAE por par | Casos observados nos pares |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Dengue | **86,5%** | 100,0% | 13,5 p.p. menor | 1,7084 | 113.696 |
+| Chikungunya | **100,5%** | 100,0% | 0,5 p.p. maior | 0,1153 | 6.608 |
+| Zika | **100,1%** | 100,0% | 0,1 p.p. maior | 0,0163 | 940 |
+
+O denominador soma casos por par município-semana-horizonte. Há 57.600 pares por doença, equivalentes a 14.400 município-semanas únicas avaliadas quatro vezes, uma por horizonte. Por isso, os totais da última coluna são quatro vezes os casos das semanas únicas: 28.424 para dengue, 1.652 para chikungunya e 235 para zika. Pares repetidos não são observações independentes.
+
+Visto como comparação simples, dengue tem menos erro agregado que o controle sempre zero. Chikungunya e zika ficam muito perto de 100%, portanto praticamente empatam com esse controle neste teste; os valores arredondados ficam ligeiramente acima dele. Isso não mede detecção de surtos nem ocorrência por município.
+
+## Como o treino usa a métrica
+
+O treino usa alvos até 2024, escolhe a época pela WAPE de 2025 e mede o teste parcial de 2026 até a semana epidemiológica 32. O modelo aprende principalmente com erro absoluto mascarado, normalizado pelo volume médio observado no treino. Esse cálculo em minibatches aproxima a WAPE de treino; a seleção de época e a métrica publicada calculam WAPE de forma agregada. A log-verossimilhança negativa binomial recebe peso auxiliar de 0,05 para conservar uma distribuição e produzir intervalos preditivos.
+
+| Doença | Melhor época | WAPE da validação de 2025 | WAPE do teste parcial de 2026 |
 | --- | ---: | ---: | ---: |
-| Dengue | **13,8%** | 1,701 | 1,974 |
-| Chikungunya | **4,8%** | 0,1092 | 0,1147 |
-| Zika | **0,0%** | 0,01632 | 0,01632 |
+| Dengue | 2 | 81,24% | 86,55% |
+| Chikungunya | 4 | 95,85% | 100,48% |
+| Zika | 3 | 100,10% | 100,08% |
 
-A conta é `100 × (1 − MAE do MLP / MAE da referência)`. Valor positivo indica redução de erro; zero indica empate; valor negativo indica aumento. O CSV de resumo arredonda o resultado a uma casa decimal. Esses valores **não são percentual de acerto**, não medem a proporção de surtos detectados e não significam que cada município foi previsto corretamente.
+A WAPE é um erro absoluto agregado normalizado pelo volume. Em dados com muitos zeros, ela pode favorecer previsões muito pequenas para doenças esparsas; por isso, um valor perto de 100% deve ser lido junto com probabilidades de ocorrência, detecção de aumentos, intervalos e métricas por horizonte. MAPE simples não foi adotada porque é indefinida onde o observado é zero.
 
-Para a binomial negativa, o MLP fornece uma distribuição. O índice usa a **mediana prevista** como valor pontual, porque ela é adequada à perda absoluta. Para planejar totais esperados, continua disponível a média da distribuição. No relatório JSON, `point_mae` é o MAE da mediana e `mae` é o MAE da média.
-
-O ganho é pequeno em termos absolutos para chikungunya: cerca de 0,0055 caso por par município-semana-horizonte. Para zika, a mediana do modelo praticamente empata com “sempre zero”. Isso é especialmente relevante porque 95,1% dos alvos de chikungunya e 98,5% dos de zika não tiveram casos no recorte avaliado.
+O teste de 2026 é parcial e já foi consultado durante o desenvolvimento; as fontes públicas podem conter revisões posteriores. Os números são um diagnóstico retrospectivo, não uma avaliação independente ou garantia prospectiva.
 
 ## Dados e definição operacional
 
-Foram baixados 50 ZIPs anuais oficiais, cerca de 914 MB: dengue de 2000 a 2026, chikungunya de 2015 a 2026 e zika de 2016 a 2026. Para manter uma janela comum às três doenças, o painel e os modelos usam 2016–2026. O painel cobre 450 municípios da Região Norte. Os arquivos anteriores a 2016 foram preservados localmente, mas não entram nesta versão comparável.
+O painel e os modelos usam a janela comparável de 2016–2026 e 450 municípios da Região Norte. Foram preservados localmente 50 arquivos anuais oficiais; anos anteriores a 2016 não entram no modelo porque exigem harmonização histórica de formulários e classificações.
 
 A definição principal contabiliza notificações individuais (`tp_not=2`) não descartadas, exclui duplicidades marcadas quando o campo está disponível e aplica a classificação final específica por doença.
 
@@ -32,41 +48,23 @@ A definição principal contabiliza notificações individuais (`tp_not=2`) não
 
 O painel tem SHA-256 `df7f3f92f83571b69bdee0b597a66d3198c6a6e61bfe8fc4d70986dca7cac5bd`. Casos são notificações registradas no Sinan; não equivalem a todas as infecções ocorridas.
 
-## Treino e avaliação
-
-Cada doença tem um MLP global separado. A rede é treinada pela log-verossimilhança negativa da binomial negativa, e a época é selecionada pelo MAE da mediana na validação de 2025. O treino usa alvos até 2024; 2025 orienta a escolha da época; o teste parcial de 2026 vai até 2026-W32. O corte considera uma defasagem operacional de oito semanas em relação à atualização da fonte.
-
-O retreino em CPU, com semente 42, escolheu as épocas 9 para dengue, 2 para chikungunya e 1 para zika. Foram comparadas quatro referências: sempre zero, persistência, média móvel de quatro semanas e sazonalidade de 52 semanas. A seleção da referência usa apenas o MAE agregado dos backtests de 2022–2024; “sempre zero” venceu para as três doenças. O teste de 2026 não foi usado para escolher a referência.
-
-| Doença | MAE da mediana do MLP | MAE de sempre zero | MAE da média do MLP | RMSE da média | WIS do MLP |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Dengue | 1,7012 | 1,9739 | 2,0993 | 8,1485 | 0,9861 |
-| Chikungunya | 0,1092 | 0,1147 | 0,1910 | 0,8513 | 0,0770 |
-| Zika | 0,01632 | 0,01632 | 0,04277 | 0,1466 | 0,0151 |
-
-A média prevista responde ao total esperado, mas pode ter MAE maior que a mediana. O índice resume o valor pontual; o MAE da média, RMSE e WIS continuam registrados para que a distribuição e os totais também possam ser analisados.
-
-O teste parcial contém 14.400 município-semanas únicas (450 municípios × 32 semanas), com 28.424 notificações de dengue, 1.652 de chikungunya e 235 de zika. Cada município-semana pode aparecer quatro vezes, uma por horizonte de previsão, somando 57.600 pares previsão-alvo por doença. Esses pares se sobrepõem e não são observações independentes; o índice não vem acompanhado de intervalo de confiança.
-
-Os resultados são retrospectivos. Os arquivos públicos podem incorporar revisões que não estavam disponíveis em cada data histórica, e 2026 já foi consultado durante o desenvolvimento. Portanto, os números não representam uma avaliação final independente nem comprovam desempenho prospectivo. Reserve períodos futuros ainda não examinados para essa conclusão.
-
 ## Previsões municipais e estaduais
 
-Com os checkpoints retreinados, foram emitidas previsões para a origem de 04/10/2026, semana epidemiológica 40, compatível com a maturidade então registrada. Foram geradas 1.800 linhas municipais por doença (450 municípios × quatro horizontes) e 28 linhas por doença para as sete UFs × quatro semanas.
+Com os novos checkpoints, foram emitidas previsões para a origem de 04/10/2026 (semana epidemiológica 40), para as semanas 41–44. Os arquivos contêm 1.800 linhas municipais por doença (450 municípios × quatro horizontes) e 28 linhas por doença para as sete UFs × quatro semanas.
 
 | Semana-alvo de 2026 | Dengue: soma esperada nas UFs | Chikungunya: soma esperada nas UFs | Zika: soma esperada nas UFs |
 | --- | ---: | ---: | ---: |
-| 41 | 520,4 | 29,9 | 7,1 |
-| 42 | 544,1 | 31,0 | 7,4 |
-| 43 | 552,1 | 31,4 | 7,9 |
-| 44 | 597,2 | 30,1 | 7,6 |
+| 41 | 198,7479 | 1,2999 | 0,0071 |
+| 42 | 205,5976 | 1,5677 | 0,0066 |
+| 43 | 210,9578 | 1,4001 | 0,0062 |
+| 44 | 194,0206 | 1,5412 | 0,0066 |
 
-As somas são médias esperadas das previsões municipais. Os intervalos estaduais simulam sorteios municipais independentes e não capturam explicitamente a dependência espacial. Como a origem é histórica, essas saídas documentam a rodada e não são previsões atuais.
+Os números são médias esperadas agregadas, não contagens inteiras observadas. As previsões de chikungunya e zika são muito pequenas, coerentes com uma rede que, sob perda absoluta, se aproxima da solução sempre zero em alvos esparsos. Não interprete isso como ausência garantida de casos. Os intervalos por UF simulam independência entre municípios e podem subestimar a incerteza espacial. A origem é histórica; esses arquivos documentam uma rodada e não são previsões atuais.
 
-O resumo local de uma linha por doença está em `outputs/reports/disease_skill_summary.csv`. Os relatórios JSON incluem os MAEs, WIS, cobertura, largura de intervalo, backtests e recortes por horizonte e UF. Os checkpoints novos ficam em `outputs/models/`; as previsões municipais e estaduais, em `outputs/forecasts/`.
+O resumo de uma linha por doença está em `outputs/reports/disease_wape_summary.csv`. Os relatórios JSON contêm WAPE geral e por horizonte/UF, MAE, RMSE, WIS, cobertura, largura dos intervalos e backtests dos baselines. Checkpoints ficam em `outputs/models/`; previsões municipais e por UF, em `outputs/forecasts/`.
 
-## Frase segura para divulgação
+## Formulação segura para divulgação
 
-> No teste retrospectivo parcial até a semana epidemiológica 32 de 2026, o MLP reduziu o MAE da mediana em 13,8% para dengue e 4,8% para chikungunya frente ao controle “sempre zero”; para zika, o resultado arredondado foi 0,0%. O teste já foi consultado durante o desenvolvimento e não é uma avaliação independente.
+> No teste retrospectivo parcial até a semana epidemiológica 32 de 2026, a WAPE foi 86,5% para dengue, 100,5% para chikungunya e 100,1% para zika. A WAPE compara a soma dos erros absolutos ao volume observado; 100% corresponde ao controle sempre prever zero. O teste já foi consultado durante o desenvolvimento e não é uma avaliação independente.
 
-O manifesto versionado das fontes e seus hashes está em [initial-run-manifest-2026-10-12.json](initial-run-manifest-2026-10-12.json). Os dicionários utilizados estão em [docs/dictionaries](dictionaries/README.md).
+O manifesto de fontes e hashes está em [initial-run-manifest-2026-10-12.json](initial-run-manifest-2026-10-12.json). Os dicionários utilizados estão em [dictionaries](dictionaries/README.md).
