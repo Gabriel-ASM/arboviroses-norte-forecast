@@ -129,22 +129,27 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "fit":
-            from .training import fit_disease
+            from .training import fit_disease, write_skill_summary
 
+            reports = []
             for disease in args.diseases:
-                fit_disease(
-                    args.panel,
-                    args.raw_dir,
-                    disease,
-                    args.output_dir,
-                    reporting_lag=args.lag_weeks,
-                    epochs=args.epochs,
-                    batch_size=args.batch_size,
-                    learning_rate=args.learning_rate,
-                    seed=args.seed,
-                    device=args.device,
-                    start_year=args.start_year,
+                reports.append(
+                    fit_disease(
+                        args.panel,
+                        args.raw_dir,
+                        disease,
+                        args.output_dir,
+                        reporting_lag=args.lag_weeks,
+                        epochs=args.epochs,
+                        batch_size=args.batch_size,
+                        learning_rate=args.learning_rate,
+                        seed=args.seed,
+                        device=args.device,
+                        start_year=args.start_year,
+                    )
                 )
+            summary_path = write_skill_summary(reports, args.output_dir)
+            print(f"Resumo: {summary_path}")
             return 0
 
         if args.command == "predict":

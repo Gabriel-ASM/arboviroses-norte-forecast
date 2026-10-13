@@ -280,7 +280,10 @@ def _dispersion(target: np.ndarray, mask: np.ndarray) -> float:
 
 
 def _distribution_metrics(
-    actual: np.ndarray, mean: np.ndarray, dispersion: np.ndarray
+    actual: np.ndarray,
+    mean: np.ndarray,
+    dispersion: np.ndarray,
+    point_prediction: np.ndarray | None = None,
 ) -> dict[str, float | int]:
     nbinom = _negative_binomial()
     actual = np.asarray(actual, dtype=np.float64)
@@ -288,6 +291,7 @@ def _distribution_metrics(
     r = np.maximum(np.asarray(dispersion, dtype=np.float64), 1e-5)
     prob = r / (r + mean)
     pred50 = nbinom.ppf(0.5, r, prob)
+    point = mean if point_prediction is None else np.asarray(point_prediction, dtype=np.float64)
     interval_scores: list[np.ndarray] = []
     coverage: dict[str, float] = {}
     width: dict[str, float] = {}
@@ -307,6 +311,7 @@ def _distribution_metrics(
     return {
         "n": int(actual.size),
         "mae": float(np.mean(np.abs(actual - mean))),
+        "point_mae": float(np.mean(np.abs(actual - point))),
         "rmse": float(np.mean(np.square(actual - mean)) ** 0.5),
         "wis": float(np.mean(wis)),
         **coverage,
@@ -329,6 +334,7 @@ def _baseline_means(examples: Examples, lag: int, lookback: int) -> dict[str, np
         else:
             seasonal[:, horizon] = moving[:, horizon]
     return {
+        "always_zero": np.zeros_like(examples.target, dtype=np.float32),
         "persistence": np.maximum(persistence, 0),
         "moving_average_4": np.maximum(moving, 0),
         "seasonal_naive_52": np.maximum(seasonal, 0),
@@ -340,6 +346,7 @@ def _metrics_by_horizon(
     prediction: np.ndarray,
     mask: np.ndarray,
     r: float | np.ndarray,
+    point_prediction: np.ndarray | None = None,
 ) -> dict[str, Any]:
     result: dict[str, Any] = {"overall": {}, "horizons": {}}
     global_selected = mask
@@ -348,6 +355,7 @@ def _metrics_by_horizon(
             examples.target[global_selected],
             prediction[global_selected],
             np.broadcast_to(r, prediction.shape)[global_selected],
+            None if point_prediction is None else point_prediction[global_selected],
         )
     else:
         result["overall"] = {"n": 0, "warning": "Nenhum alvo elegível neste período."}
@@ -358,6 +366,7 @@ def _metrics_by_horizon(
                 examples.target[selected, horizon],
                 prediction[selected, horizon],
                 np.broadcast_to(r, prediction.shape)[selected, horizon],
+                None if point_prediction is None else point_prediction[selected, horizon],
             )
         else:
             result["horizons"][f"{horizon + 1}_week"] = {"n": 0}
@@ -369,18 +378,110 @@ def _metrics_with_uf(
     prediction: np.ndarray,
     mask: np.ndarray,
     dispersion: float | np.ndarray,
+    point_prediction: np.ndarray | None = None,
 ) -> dict[str, Any]:
-    result = _metrics_by_horizon(examples, prediction, mask, dispersion)
+    result = _metrics_by_horizon(examples, prediction, mask, dispersion, point_prediction)
     result["by_uf"] = {
         NORTH_UF_NAMES[uf_code]: _metrics_by_horizon(
             examples,
             prediction,
             mask & (examples.sample_uf == uf_code)[:, None],
             dispersion,
+            point_prediction,
         )
         for uf_code in sorted(np.unique(examples.sample_uf))
     }
     return result
+
+
+def _headline_mae_skill(metrics: dict[str, Any]) -> dict[str, Any]:
+    """Compare the model's MAE-optimal point forecast with a preselected baseline."""
+    baseline_names = (
+        "always_zero",
+        "persistence",
+        "moving_average_4",
+        "seasonal_naive_52",
+    )
+    pooled_errors = {name: 0.0 for name in baseline_names}
+    pooled_targets = {name: 0 for name in baseline_names}
+    for year_metrics in metrics["backtests"].values():
+        for name in baseline_names:
+            result = year_metrics[name]["overall"]
+            count = int(result.get("n", 0))
+            if count:
+                pooled_errors[name] += float(result["point_mae"]) * count
+                pooled_targets[name] += count
+
+    eligible = [name for name in baseline_names if pooled_targets[name] > 0]
+    if not eligible:
+        raise ValueError("Os backtests de 2022–2024 não permitem escolher uma referência.")
+    reference_name = min(
+        eligible,
+        key=lambda name: pooled_errors[name] / pooled_targets[name],
+    )
+    reference_backtest_mae = pooled_errors[reference_name] / pooled_targets[reference_name]
+    test = metrics["metrics"]["test_2026_partial"]
+    model_result = test["neural_mlp_nb"]["overall"]
+    reference_result = test[reference_name]["overall"]
+    model_mae = float(model_result["point_mae"])
+    reference_mae = float(reference_result["point_mae"])
+    if reference_mae <= 0:
+        raise ValueError("A MAE da referência é zero; não é possível calcular o skill relativo.")
+    unrounded_score = 100.0 * (1.0 - model_mae / reference_mae)
+    score = 0.0 if abs(unrounded_score) < 0.05 else round(unrounded_score, 1)
+    mature_through = metrics["split"].get("mature_through")
+    return {
+        "label": "Redução do MAE vs. referência (%)",
+        "value_pct": score,
+        "unrounded_value_pct": unrounded_score,
+        "model_point_mae_cases_per_forecast_target": model_mae,
+        "reference_baseline": reference_name,
+        "reference_point_mae_cases_per_forecast_target": reference_mae,
+        "reference_backtest_mae_2022_2024": reference_backtest_mae,
+        "reference_selection_period": (
+            "2022–2024; menor MAE agregado entre sempre zero, persistência, "
+            "média móvel de 4 semanas e sazonalidade de 52 semanas"
+        ),
+        "evaluation_period": f"2026 parcial, até {mature_through}",
+        "n_forecast_target_pairs": int(model_result["n"]),
+        "interpretation": (
+            "positivo: erro absoluto menor que a referência; zero: empate; "
+            "negativo: erro absoluto maior que a referência"
+        ),
+        "status": (
+            "diagnóstico retrospectivo; 2026 já foi consultado durante o desenvolvimento "
+            "e não é uma avaliação independente"
+        ),
+    }
+
+
+def write_skill_summary(reports: list[dict[str, Any]], output_root: Path) -> Path:
+    """Write one communicable score per disease from this fit invocation."""
+    baseline_labels = {
+        "always_zero": "sempre zero",
+        "persistence": "persistência",
+        "moving_average_4": "média móvel de 4 semanas",
+        "seasonal_naive_52": "sazonal de 52 semanas",
+    }
+    rows = []
+    for report in reports:
+        score = report["headline_score"]
+        rows.append(
+            {
+                "doenca": report["disease"],
+                "reducao_mae_pct_vs_referencia": score["value_pct"],
+                "referencia": baseline_labels[score["reference_baseline"]],
+                "periodo_avaliado": score["evaluation_period"],
+                "mae_modelo": score["model_point_mae_cases_per_forecast_target"],
+                "mae_referencia": score["reference_point_mae_cases_per_forecast_target"],
+                "pares_previsao_alvo": score["n_forecast_target_pairs"],
+                "status": score["status"],
+            }
+        )
+    output_path = output_root / "reports" / "disease_skill_summary.csv"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(rows).to_csv(output_path, index=False, sep=";", decimal=",", encoding="utf-8-sig")
+    return output_path
 
 
 def _torch_modules():
@@ -466,10 +567,12 @@ def _train_model(
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-4)
     best_state = None
     best_loss = float("inf")
+    best_mae = float("inf")
     best_epoch = 0
     patience = 6
     stale = 0
     history: list[dict[str, float]] = []
+    nbinom = _negative_binomial()
 
     for epoch in range(1, epochs + 1):
         model.train()
@@ -492,6 +595,7 @@ def _train_model(
         model.eval()
         validation_loss_total = 0.0
         validation_target_count = 0
+        validation_absolute_error_total = 0.0
         with torch.no_grad():
             for x, regional, state, city, season, target, mask in val_loader:
                 mu, dispersion = model(
@@ -507,11 +611,32 @@ def _train_model(
                 )
                 validation_loss_total += float(batch_loss.cpu()) * batch_target_count
                 validation_target_count += batch_target_count
+                mean_np = np.maximum(mu.cpu().numpy(), 1e-8)
+                dispersion_np = np.maximum(dispersion.cpu().numpy(), 1e-5)
+                probability_np = dispersion_np / (dispersion_np + mean_np)
+                median_np = nbinom.ppf(0.5, dispersion_np, probability_np)
+                target_np = target.cpu().numpy()
+                valid_np = mask.cpu().numpy().astype(bool)
+                validation_absolute_error_total += float(
+                    np.abs(target_np - median_np)[valid_np].sum()
+                )
         train_loss = train_loss_total / max(train_target_count, 1)
         val_loss = validation_loss_total / max(validation_target_count, 1)
-        history.append({"epoch": epoch, "train_nll": train_loss, "validation_nll": val_loss})
-        print(f"época {epoch:02d}: NLL treino={train_loss:.4f}; validação={val_loss:.4f}")
-        if val_loss < best_loss - 1e-5:
+        val_mae = validation_absolute_error_total / max(validation_target_count, 1)
+        history.append(
+            {
+                "epoch": epoch,
+                "train_nll": train_loss,
+                "validation_nll": val_loss,
+                "validation_point_mae": val_mae,
+            }
+        )
+        print(
+            f"época {epoch:02d}: NLL treino={train_loss:.4f}; "
+            f"NLL validação={val_loss:.4f}; MAE mediana validação={val_mae:.4f}"
+        )
+        if val_mae < best_mae - 1e-5:
+            best_mae = val_mae
             best_loss = val_loss
             best_epoch = epoch
             best_state = copy.deepcopy(model.state_dict())
@@ -523,7 +648,13 @@ def _train_model(
     if best_state is None:
         raise RuntimeError("O treino não produziu um checkpoint válido.")
     model.load_state_dict(best_state)
-    return model, {"best_epoch": best_epoch, "best_validation_nll": best_loss, "history": history}
+    return model, {
+        "best_epoch": best_epoch,
+        "selection_metric": "validation median point MAE",
+        "best_validation_point_mae": best_mae,
+        "best_validation_nll": best_loss,
+        "history": history,
+    }
 
 
 def fit_disease(
@@ -584,6 +715,8 @@ def fit_disease(
         chosen_device,
     )
     neural_mean, neural_r = _predict_arrays(model, examples, chosen_device)
+    neural_probability = neural_r / (neural_r + np.maximum(neural_mean, 1e-8))
+    neural_point = _negative_binomial().ppf(0.5, neural_r, neural_probability)
     metrics: dict[str, Any] = {
         "disease": disease,
         "weekly_panel_sha256": panel_sha256,
@@ -633,7 +766,9 @@ def fit_disease(
         ("test_2026_partial", test_mask),
     ):
         metrics["metrics"][period_name] = {
-            "neural_mlp_nb": _metrics_with_uf(examples, neural_mean, mask, neural_r)
+            "neural_mlp_nb": _metrics_with_uf(
+                examples, neural_mean, mask, neural_r, neural_point
+            )
         }
         for name, prediction in baseline_predictions.items():
             metrics["metrics"][period_name][name] = _metrics_with_uf(
@@ -653,6 +788,7 @@ def fit_disease(
             name: _metrics_with_uf(examples, prediction, mask, fold_r)
             for name, prediction in baseline_predictions.items()
         }
+    metrics["headline_score"] = _headline_mae_skill(metrics)
 
     output_root.mkdir(parents=True, exist_ok=True)
     model_dir = output_root / "models"
@@ -680,7 +816,10 @@ def fit_disease(
     )
     report_path = report_dir / f"{disease}_metrics.json"
     report_path.write_text(json.dumps(metrics, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"Modelo: {checkpoint}; métricas: {report_path}")
+    print(
+        f"Modelo: {checkpoint}; métricas: {report_path}; "
+        f"redução do MAE vs. referência={metrics['headline_score']['value_pct']:+.1f}%"
+    )
     return metrics
 
 

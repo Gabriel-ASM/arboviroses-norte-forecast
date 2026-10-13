@@ -1,6 +1,6 @@
 # Plano metodológico de validação e evolução
 
-Atualizado em 12/10/2026. Este documento registra o que já foi executado e organiza as próximas decisões. A proposta metodológica consolidada está em [Texto atual.md](Texto%20atual.md); os resultados da primeira execução estão em [docs/initial-run-results.md](docs/initial-run-results.md).
+Atualizado em 12/10/2026. Este documento registra o que já foi executado e organiza as próximas decisões. A proposta metodológica consolidada está em [Texto atual.md](Texto%20atual.md); os resultados do retreino estão em [docs/initial-run-results.md](docs/initial-run-results.md).
 
 ## 1. Objetivo e unidade de previsão
 
@@ -13,10 +13,11 @@ A escolha do objetivo operacional deve preceder a próxima comparação: estimar
 - Foram obtidos 50 arquivos anuais oficiais e os três dicionários atuais. A janela comparável analisada é 2016–2026, comum às três doenças.
 - O painel final contém 450 municípios do Norte e contagens semanais para a definição operacional de casos prováveis. A classificação é específica por doença; categorias de dengue e chikungunya não são intercambiadas.
 - O MLP global em PyTorch prevê a distribuição binomial negativa de cada doença. As entradas usam 52 semanas de contagens municipais, resumos estaduais, UF, calendário cíclico e embedding municipal; o corte de entrada fica oito semanas antes da origem.
-- Persistência, média móvel de quatro semanas e sazonalidade de 52 semanas servem como baselines. A avaliação inclui backtests desses métodos em 2022–2024, validação em 2025 e teste parcial em 2026.
+- Sempre zero, persistência, média móvel de quatro semanas e sazonalidade de 52 semanas servem como referências. A avaliação inclui backtests em 2022–2024, validação em 2025 e teste parcial em 2026.
+- O MLP continua treinado pela NLL binomial negativa; a época agora é selecionada pelo MAE da mediana prevista na validação de 2025. O resumo apresenta, por doença, a redução percentual do MAE frente à referência escolhida nos backtests de 2022–2024.
 - As correções desta execução incluem parsing separado para datas ISO e brasileiras, classificação de `CLASSI_FIN` por doença, exclusão de residências sem correspondência municipal, normalização correta do WIS, agregação ponderada da NLL entre lotes e rastreabilidade entre painel, preparação, fontes e checkpoint.
 
-O WIS agora usa o denominador `K + 0,5`, com `K` intervalos centrais. A perda de validação é ponderada pelo total de alvos válidos, em vez de atribuir o mesmo peso a lotes de tamanhos diferentes. Métricas devem ser lidas do relatório da execução corrigida, pois valores de versões anteriores não são diretamente comparáveis.
+O WIS agora usa o denominador `K + 0,5`, com `K` intervalos centrais. A NLL de validação é ponderada pelo total de alvos válidos, em vez de atribuir o mesmo peso a lotes de tamanhos diferentes. Métricas devem ser lidas do relatório da execução retreinada, pois valores de versões anteriores não são diretamente comparáveis.
 
 ## 3. Próximas etapas, em ordem
 
@@ -75,7 +76,7 @@ Arquivar previsões datadas antes que os alvos ocorram, junto com os hashes do p
 - O atraso padrão de oito semanas é uma aproximação conservadora, não uma estimativa validada para todas as doenças, estados e épocas.
 - Os atributos são históricos e territoriais; clima, população, mobilidade e sinais clínicos não fazem parte do modelo atual.
 - Os intervalos por UF pressupõem independência entre sorteios municipais. A soma das médias municipais é um total esperado, mas a incerteza associada requer validação espacial.
-- As previsões com origem em 04/10/2026 para as semanas 41–44 são o artefato da primeira execução; não representam uma emissão atualizada para uso prospectivo.
+- As previsões retreinadas com origem em 04/10/2026 para as semanas 41–44 documentam uma emissão histórica; não representam uma previsão atual para uso prospectivo.
 
 ## 5. Referências
 

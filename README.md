@@ -2,7 +2,7 @@
 
 Pipeline em Python para estimar casos semanais de dengue, chikungunya e zika por município de residência, com agregação opcional por estado. O modelo neural usa PyTorch e produz previsões probabilísticas para as quatro semanas seguintes.
 
-**Execução em 12/10/2026:** 50 ZIPs anuais oficiais (cerca de 914 MB) foram baixados; o painel e os modelos usam a janela comum de 2016 a 2026 e incluem 450 municípios do Norte. Os três modelos foram treinados em CPU, avaliados e usados para previsões municipais e por UF. O teste está disponível até 2026-W32, e a previsão mais recente compatível com a maturidade dos dados foi emitida em 04/10/2026. Dados, modelos e relatórios detalhados ficam em `data/` e `outputs/`, fora do Git; o resumo desta execução está em [docs/initial-run-results.md](docs/initial-run-results.md).
+**Execução em 12/10/2026:** 50 ZIPs anuais oficiais (cerca de 914 MB) foram baixados; o painel e os modelos usam a janela comum de 2016 a 2026 e incluem 450 municípios do Norte. Cada doença tem seu próprio modelo e um índice-resumo de erro absoluto em relação a uma referência simples. O teste está disponível até 2026-W32. Dados, modelos, previsões e relatórios detalhados ficam em `data/` e `outputs/`, fora do Git; o resumo desta execução está em [docs/initial-run-results.md](docs/initial-run-results.md).
 
 ## Uso
 
@@ -22,7 +22,7 @@ arboviroses catalog
 arboviroses download --start-year 2016 --end-year 2026
 arboviroses prepare --start-year 2016
 arboviroses fit --start-year 2016 --epochs 30
-arboviroses predict --as-of 2026-10-04
+arboviroses predict
 ```
 
 O modelo usa 2016 em diante como janela comum entre as três doenças. Os recursos anteriores continuam disponíveis nos catálogos, mas não entram nesta versão porque os formulários e códigos de classificação mudaram; harmonizar esses anos exige mapeamento histórico específico antes do uso.
@@ -31,7 +31,7 @@ O modelo usa 2016 em diante como janela comum entre as três doenças. Os recurs
 
 Use `arboviroses predict --level uf` para agregar por estado. Pode filtrar com `--uf PA` ou consultar um município pelo código Sinan de seis dígitos ou IBGE de sete dígitos, por exemplo `--municipality 1501402`.
 
-No treino, os pesos são escolhidos pela perda de validação de 2025 e o teste de 2026 é reportado separadamente. O modelo final é salvo em `outputs/models/`; métricas, em `outputs/reports/`; previsões, em `outputs/forecasts/`. Dados baixados ficam em `data/` e são excluídos do Git.
+No treino, os pesos são escolhidos pelo MAE da mediana prevista na validação de 2025; a rede continua aprendendo a distribuição binomial negativa pela log-verossimilhança. O comando `fit` grava um índice por doença em `outputs/reports/disease_skill_summary.csv`. Modelos ficam em `outputs/models/`, métricas completas em `outputs/reports/` e previsões municipais/estaduais em `outputs/forecasts/`. Dados baixados ficam em `data/` e são excluídos do Git.
 
 ## O que o pipeline faz
 
@@ -55,7 +55,11 @@ A lista do IBGE permite montar séries zeradas para municípios sem notificaçã
 
 Cada doença é ajustada em separado. O MLP global compartilha pesos entre municípios, recebe contagens municipais `log1p` das 52 semanas observadas, resumos recentes do estado, indicador da UF, calendário futuro cíclico e embedding municipal. Saídas por horizonte são média e dispersão de uma binomial negativa, treinadas por log-verossimilhança negativa. A parametrização PyTorch é `total_count=r` e `probs=mu/(r+mu)`, cuja média é `mu`.
 
-As referências são persistência, média móvel de quatro semanas e defasagem sazonal de 52 semanas. Elas recebem dispersão estimada no treino para calcular WIS e cobertura. O relatório inclui backtests dessas referências em 2022–2024, validação de 2025 e teste parcial de 2026. O MLP usa early stopping pela perda de 2025. Isso não constitui seleção exaustiva de hiperparâmetros nem validação cruzada da rede.
+As referências são sempre zero, persistência, média móvel de quatro semanas e defasagem sazonal de 52 semanas. O relatório inclui backtests dessas referências em 2022–2024, validação de 2025 e teste parcial de 2026. A época do MLP é selecionada pelo MAE da mediana prevista em 2025, que é o ponto da distribuição adequado à perda absoluta; a rede continua treinada por log-verossimilhança negativa para preservar a distribuição preditiva.
+
+O resumo de divulgação é a **redução percentual do MAE**: `100 × (1 − MAE do MLP / MAE da referência)`. A referência é escolhida separadamente para cada doença como a que teve menor MAE agregado nos backtests de 2022–2024 entre “sempre zero”, persistência, média móvel de quatro semanas e sazonalidade de 52 semanas. O baseline sempre zero é um controle para séries esparsas, não uma recomendação operacional. Valor positivo indica menor erro do MLP; zero indica empate; valor negativo indica maior erro. O denominador é o MAE da mesma referência no teste parcial de 2026, até a última semana considerada madura. O CSV arredonda esse índice a uma casa decimal. O relatório detalhado preserva MAE da média, MAE do ponto mediano, RMSE, WIS, cobertura, largura e recortes por horizonte e UF.
+
+O índice usa previsões por município, semana-alvo e horizonte. Como os quatro horizontes podem prever a mesma semana a partir de origens diferentes, os pares previsão-alvo se sobrepõem e não são observações independentes. O resultado de 2026 é retrospectivo e já foi consultado durante o desenvolvimento; é útil como diagnóstico, mas não representa uma avaliação final independente nem deve ser chamado de “percentual de acerto”. Isso não constitui seleção exaustiva de hiperparâmetros nem validação cruzada da rede.
 
 O relatório por horizonte e UF inclui MAE, RMSE, WIS, cobertura e largura dos intervalos. `--level uf` agrega as médias municipais e simula intervalos de soma sob independência entre municípios; essa hipótese não representa dependência espacial e pode subestimar incerteza estadual.
 
