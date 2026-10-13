@@ -47,6 +47,12 @@ def build_parser() -> argparse.ArgumentParser:
     prepare.add_argument("--diseases", type=_disease_list, default=_disease_list("dengue,chikungunya,zika"))
     prepare.add_argument("--case-definition", choices=("probable", "confirmed"), default="probable")
     prepare.add_argument(
+        "--start-year",
+        type=int,
+        default=2016,
+        help="Ano inicial da janela comparável; classificações anteriores não estão homologadas.",
+    )
+    prepare.add_argument(
         "--registry-mode",
         choices=("auto", "required", "observed"),
         default="auto",
@@ -58,6 +64,12 @@ def build_parser() -> argparse.ArgumentParser:
     fit.add_argument("--diseases", type=_disease_list, default=_disease_list("dengue,chikungunya,zika"))
     fit.add_argument("--output-dir", type=Path, default=Path("outputs"))
     fit.add_argument("--lag-weeks", type=int, default=8)
+    fit.add_argument(
+        "--start-year",
+        type=int,
+        default=2016,
+        help="Ano inicial do histórico usado pelo modelo (mínimo 2016).",
+    )
     fit.add_argument("--epochs", type=int, default=30)
     fit.add_argument("--batch-size", type=int, default=512)
     fit.add_argument("--learning-rate", type=float, default=1e-3)
@@ -110,6 +122,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.diseases,
                 args.case_definition,
                 args.registry_mode,
+                start_year=args.start_year,
             )
             print(json.dumps(stats, ensure_ascii=False, indent=2))
             print(f"Painel salvo: {args.panel}")
@@ -130,6 +143,7 @@ def main(argv: list[str] | None = None) -> int:
                     learning_rate=args.learning_rate,
                     seed=args.seed,
                     device=args.device,
+                    start_year=args.start_year,
                 )
             return 0
 

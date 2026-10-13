@@ -4,3 +4,4 @@ Zika: https://dadosabertos.saude.gov.br/dataset/arboviroses-zika-virus
 Calendário epidemiológico Sinan: https://www.portalsinan.saude.gov.br/calendario-epidemiologico/
 Municípios IBGE: https://servicodados.ibge.gov.br/api/v1/localidades/estados/15/municipios?orderBy=id
 PyTorch NegativeBinomial: https://docs.pytorch.org/docs/stable/distributions.html#negativebinomial
+Dicionário combinado Dengue/Chikungunya (2015): https://portalsinan.saude.gov.br/images/documentos/Agravos/Dengue/DIC_DADOS_ONLINE.pdf

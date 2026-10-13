@@ -145,7 +145,16 @@ def download_years(
             extension = str(resource["format"]).casefold()
             destination = root / disease.key / f"{year}.{extension}.zip"
             prior = known.get((disease.key, year))
-            if destination.exists() and prior and prior.get("resource_id") == resource.get("id"):
+            resource_is_unchanged = prior is not None and all(
+                prior.get(manifest_key) == resource.get(resource_key)
+                for manifest_key, resource_key in (
+                    ("resource_id", "id"),
+                    ("source_url", "url"),
+                    ("source_updated_at", "last_modified"),
+                    ("catalog_updated_at", "metadata_modified"),
+                )
+            )
+            if destination.exists() and resource_is_unchanged:
                 added.append(prior)
                 continue
             sha256 = _download(str(resource["url"]), destination, session)

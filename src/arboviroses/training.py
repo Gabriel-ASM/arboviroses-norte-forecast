@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import random
 from dataclasses import dataclass
@@ -15,7 +16,7 @@ import pandas as pd
 
 from .calendar import epi_from_date, epi_key, epi_week_start, shift_epi, weeks_in_epi_year
 from .model import build_model, negative_binomial_nll
-from .panel import NORTH_UF_NAMES
+from .panel import CLASSIFICATION_CODES, NORTH_UF_NAMES
 
 LOOKBACK = 52
 FORECAST_HORIZON = 4
@@ -49,9 +50,17 @@ def _snapshot_date(raw_root: Path, disease: str) -> date | None:
     if not path.exists():
         return None
     manifest = json.loads(path.read_text(encoding="utf-8"))
+    disease_sources = [
+        item for item in manifest.get("files", []) if item.get("disease") == disease
+    ]
+    if not disease_sources:
+        return None
+    latest_year = max(int(item["year"]) for item in disease_sources)
     candidates: list[date] = []
-    for item in manifest.get("files", []):
-        if item.get("disease") != disease:
+    for item in disease_sources:
+        # An updated historical resource must not move the maturity cutoff for
+        # the current surveillance year.
+        if int(item["year"]) != latest_year:
             continue
         value = item.get("source_updated_at") or item.get("catalog_updated_at")
         if value:
@@ -67,12 +76,21 @@ def _dense_counts(
     disease: str,
     raw_root: Path,
     reporting_lag: int,
+    start_year: int = 2016,
 ) -> tuple[np.ndarray, list[str], list[tuple[int, int]], dict[str, Any]]:
+    if start_year < 2016:
+        raise ValueError(
+            "O treino comparável está validado a partir de 2016; "
+            "classificações anteriores precisam de mapeamento histórico."
+        )
     frame = panel.loc[panel["disease"] == disease].copy()
     if frame.empty:
         raise ValueError(f"Painel sem registros para {disease}")
     for column in ("epi_year", "epi_week", "cases"):
         frame[column] = pd.to_numeric(frame[column], errors="raise").astype(int)
+    frame = frame.loc[frame["epi_year"] >= start_year].copy()
+    if frame.empty:
+        raise ValueError(f"Painel sem registros para {disease} a partir de {start_year}")
     frame["municipality_code"] = frame["municipality_code"].astype(str).str.zfill(6)
     frame = frame.groupby(["municipality_code", "epi_year", "epi_week"], as_index=False)["cases"].sum()
 
@@ -80,7 +98,7 @@ def _dense_counts(
     source_years = [
         int(item["year"])
         for item in raw_manifest.get("files", [])
-        if item.get("disease") == disease
+        if item.get("disease") == disease and int(item["year"]) >= start_year
     ]
     snapshot = _snapshot_date(raw_root, disease)
     cutoff_date = snapshot - timedelta(weeks=reporting_lag) if snapshot else None
@@ -92,8 +110,8 @@ def _dense_counts(
     cutoff_key = epi_key(cutoff_year, cutoff_week)
 
     observed_year = int(frame["epi_year"].min())
-    start_year = min(source_years) if source_years else observed_year
-    start = epi_week_start(start_year, 1)
+    coverage_start_year = min(source_years) if source_years else observed_year
+    start = epi_week_start(coverage_start_year, 1)
     observed_end = max(
         epi_week_start(int(row.epi_year), int(row.epi_week))
         for row in frame[["epi_year", "epi_week"]].itertuples(index=False)
@@ -126,7 +144,8 @@ def _dense_counts(
         "snapshot_date": snapshot.isoformat() if snapshot else None,
         "mature_through": f"{cutoff_year}-W{cutoff_week:02d}",
         "mature_through_key": cutoff_key,
-        "first_source_year": start_year,
+        "first_source_year": coverage_start_year,
+        "requested_start_year": start_year,
         "last_source_year": max(source_years) if source_years else observed_year,
         "reporting_lag_weeks": reporting_lag,
         "municipalities": len(cities),
@@ -138,7 +157,10 @@ def _dense_counts(
                 "source_updated_at": item.get("source_updated_at"),
             }
             for item in sorted(
-                (item for item in raw_manifest.get("files", []) if item.get("disease") == disease),
+                (
+                    item for item in raw_manifest.get("files", [])
+                    if item.get("disease") == disease and int(item["year"]) >= start_year
+                ),
                 key=lambda item: int(item["year"]),
             )
         ],
@@ -281,7 +303,7 @@ def _distribution_metrics(
         suffix = str(int(confidence * 100))
         coverage[f"coverage_{suffix}"] = float(np.mean((actual >= lower) & (actual <= upper)))
         width[f"mean_width_{suffix}"] = float(np.mean(upper - lower))
-    wis = weighted / (0.5 + 0.5 * len(interval_scores))
+    wis = weighted / (0.5 + len(interval_scores))
     return {
         "n": int(actual.size),
         "mae": float(np.mean(np.abs(actual - mean))),
@@ -451,7 +473,8 @@ def _train_model(
 
     for epoch in range(1, epochs + 1):
         model.train()
-        train_losses = []
+        train_loss_total = 0.0
+        train_target_count = 0
         for x, regional, state, city, season, target, mask in train_loader:
             x, regional, state = x.to(device), regional.to(device), state.to(device)
             city, season = city.to(device), season.to(device)
@@ -462,10 +485,13 @@ def _train_model(
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0)
             optimizer.step()
-            train_losses.append(float(loss.detach().cpu()))
+            batch_target_count = int(mask.sum().item())
+            train_loss_total += float(loss.detach().cpu()) * batch_target_count
+            train_target_count += batch_target_count
 
         model.eval()
-        val_losses = []
+        validation_loss_total = 0.0
+        validation_target_count = 0
         with torch.no_grad():
             for x, regional, state, city, season, target, mask in val_loader:
                 mu, dispersion = model(
@@ -475,15 +501,14 @@ def _train_model(
                     city.to(device),
                     season.to(device),
                 )
-                val_losses.append(
-                    float(
-                        negative_binomial_nll(
-                            mu, dispersion, target.to(device), mask.to(device)
-                        ).cpu()
-                    )
+                batch_target_count = int(mask.sum().item())
+                batch_loss = negative_binomial_nll(
+                    mu, dispersion, target.to(device), mask.to(device)
                 )
-        train_loss = float(np.mean(train_losses))
-        val_loss = float(np.mean(val_losses))
+                validation_loss_total += float(batch_loss.cpu()) * batch_target_count
+                validation_target_count += batch_target_count
+        train_loss = train_loss_total / max(train_target_count, 1)
+        val_loss = validation_loss_total / max(validation_target_count, 1)
         history.append({"epoch": epoch, "train_nll": train_loss, "validation_nll": val_loss})
         print(f"época {epoch:02d}: NLL treino={train_loss:.4f}; validação={val_loss:.4f}")
         if val_loss < best_loss - 1e-5:
@@ -512,6 +537,7 @@ def fit_disease(
     learning_rate: float = 1e-3,
     seed: int = 42,
     device: str = "auto",
+    start_year: int = 2016,
 ) -> dict[str, Any]:
     if reporting_lag < 0:
         raise ValueError("lag de notificação não pode ser negativo.")
@@ -519,7 +545,17 @@ def fit_disease(
         raise ValueError("epochs, batch-size e learning-rate devem ser positivos.")
     torch, _, _ = _torch_modules()
     frame = pd.read_csv(panel_path, dtype={"municipality_code": "string", "disease": "string"})
-    counts, cities, periods, snapshot_info = _dense_counts(frame, disease, raw_root, reporting_lag)
+    panel_sha256 = hashlib.sha256(panel_path.read_bytes()).hexdigest()
+    quality_path = panel_path.with_name(panel_path.stem + "_quality.json")
+    panel_quality: dict[str, Any] = {}
+    panel_quality_sha256 = None
+    if quality_path.exists():
+        panel_quality = json.loads(quality_path.read_text(encoding="utf-8"))
+        panel_quality_sha256 = hashlib.sha256(quality_path.read_bytes()).hexdigest()
+    case_definition = panel_quality.get("_metadata", {}).get("case_definition", "unknown")
+    counts, cities, periods, snapshot_info = _dense_counts(
+        frame, disease, raw_root, reporting_lag, start_year
+    )
     examples = build_examples(counts, cities, periods, reporting_lag)
     train_mask = examples.target_year <= 2024
     validation_mask = examples.target_year == 2025
@@ -550,7 +586,25 @@ def fit_disease(
     neural_mean, neural_r = _predict_arrays(model, examples, chosen_device)
     metrics: dict[str, Any] = {
         "disease": disease,
-        "case_definition": "probable: tp_not=2 e classi_fin diferente de 2",
+        "weekly_panel_sha256": panel_sha256,
+        "panel_quality_sha256": panel_quality_sha256,
+        "preparation": panel_quality.get("_metadata", {}),
+        "case_definition": {
+            "name": case_definition,
+            "individual_notification_tp_not": "2",
+            "discarded_classi_fin_by_disease": {
+                name: sorted(mapping["discarded"])
+                for name, mapping in CLASSIFICATION_CODES.items()
+            },
+            "other_disease_classi_fin_excluded": {
+                name: sorted(mapping["other_disease"])
+                for name, mapping in CLASSIFICATION_CODES.items()
+            },
+            "confirmed_classi_fin_by_disease": {
+                name: sorted(mapping["confirmed"])
+                for name, mapping in CLASSIFICATION_CODES.items()
+            },
+        },
         "split": {
             "train_targets": "até 2024",
             "validation_targets": "2025",
@@ -569,6 +623,7 @@ def fit_disease(
             "lookback_weeks": LOOKBACK,
             "forecast_horizon_weeks": FORECAST_HORIZON,
             "reporting_lag_weeks": reporting_lag,
+            "start_year": start_year,
         },
         "metrics": {},
     }
@@ -615,8 +670,10 @@ def fit_disease(
             "lookback_weeks": LOOKBACK,
             "forecast_horizon_weeks": FORECAST_HORIZON,
             "reporting_lag_weeks": reporting_lag,
+            "start_year": start_year,
             "training_info": training_info,
             "snapshot_info": snapshot_info,
+            "weekly_panel_sha256": panel_sha256,
             "seed": seed,
         },
         checkpoint,
@@ -633,6 +690,7 @@ def _build_forecast_examples(
     raw_root: Path,
     reporting_lag: int,
     as_of: date,
+    start_year: int = 2016,
 ) -> tuple[
     np.ndarray,
     np.ndarray,
@@ -642,7 +700,9 @@ def _build_forecast_examples(
     list[tuple[int, int]],
     tuple[int, int],
 ]:
-    counts, present_cities, periods, info = _dense_counts(frame, disease, raw_root, reporting_lag)
+    counts, present_cities, periods, info = _dense_counts(
+        frame, disease, raw_root, reporting_lag, start_year
+    )
     asof_year, asof_week = epi_from_date(as_of)
     required_year, required_week = shift_epi(asof_year, asof_week, -reporting_lag)
     available_key = int(info["mature_through_key"])
@@ -709,9 +769,10 @@ def predict_disease(
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     known_cities = checkpoint["municipality_codes"]
     lag = checkpoint["reporting_lag_weeks"]
+    start_year = checkpoint.get("start_year", 2016)
     frame = pd.read_csv(panel_path, dtype={"municipality_code": "string", "disease": "string"})
     history, regional, state, season, cities, target_periods, origin = _build_forecast_examples(
-        frame, disease, raw_root, lag, as_of
+        frame, disease, raw_root, lag, as_of, start_year
     )
     city_to_id = {city: index + 1 for index, city in enumerate(known_cities)}
     location = np.asarray([city_to_id.get(city, 0) for city in cities], dtype=np.int64)
@@ -814,7 +875,8 @@ def predict_disease(
         raise ValueError("level deve ser 'municipality' ou 'uf'")
     else:
         result["territory_level"] = "municipality"
-    path = output_root / "forecasts" / f"{disease}_{as_of.isoformat()}.csv"
+    level_suffix = "_uf" if level == "uf" else "_municipality"
+    path = output_root / "forecasts" / f"{disease}_{as_of.isoformat()}{level_suffix}.csv"
     path.parent.mkdir(parents=True, exist_ok=True)
     result.to_csv(path, index=False)
     print(f"Previsões salvas: {path}")

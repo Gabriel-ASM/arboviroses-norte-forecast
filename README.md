@@ -2,7 +2,7 @@
 
 Pipeline em Python para estimar casos semanais de dengue, chikungunya e zika por município de residência, com agregação opcional por estado. O modelo neural usa PyTorch e produz previsões probabilísticas para as quatro semanas seguintes.
 
-**Estado em 12/10/2026:** código de ingestão, agregação, backtest de baselines, treinamento e previsão implementado. Os microdados não foram baixados neste ambiente e nenhum modelo foi treinado; portanto, ainda não há resultados epidemiológicos nem desempenho comprovado. Os PDFs dos dicionários são a única base epidemiológica versionada no Git.
+**Execução em 12/10/2026:** 50 ZIPs anuais oficiais (cerca de 914 MB) foram baixados; o painel e os modelos usam a janela comum de 2016 a 2026 e incluem 450 municípios do Norte. Os três modelos foram treinados em CPU, avaliados e usados para previsões municipais e por UF. O teste está disponível até 2026-W32, e a previsão mais recente compatível com a maturidade dos dados foi emitida em 04/10/2026. Dados, modelos e relatórios detalhados ficam em `data/` e `outputs/`, fora do Git; o resumo desta execução está em [docs/initial-run-results.md](docs/initial-run-results.md).
 
 ## Uso
 
@@ -20,18 +20,12 @@ O download histórico completo pode exigir bastante disco e tráfego. Para come�
 ```powershell
 arboviroses catalog
 arboviroses download --start-year 2016 --end-year 2026
-arboviroses prepare
-arboviroses fit --epochs 30
-arboviroses predict --as-of 2026-10-12
+arboviroses prepare --start-year 2016
+arboviroses fit --start-year 2016 --epochs 30
+arboviroses predict --as-of 2026-10-04
 ```
 
-Para usar todo o histórico disponível de dengue, inclua os anos anteriores:
-
-```powershell
-arboviroses download --diseases dengue --start-year 2000 --end-year 2026
-arboviroses prepare --diseases dengue
-arboviroses fit --diseases dengue
-```
+O modelo usa 2016 em diante como janela comum entre as três doenças. Os recursos anteriores continuam disponíveis nos catálogos, mas não entram nesta versão porque os formulários e códigos de classificação mudaram; harmonizar esses anos exige mapeamento histórico específico antes do uso.
 
 `prepare` mantém o cadastro municipal do IBGE, quando acessível. Se a conexão com o IBGE não estiver disponível, o modo `auto` segue com os municípios observados e registra a limitação. Para exigir o cadastro completo, use `arboviroses prepare --registry-mode required`; para trabalhar apenas offline, use `--registry-mode observed`.
 
@@ -46,14 +40,14 @@ No treino, os pesos são escolhidos pela perda de validação de 2025 e o teste 
 | Fonte | Descobre os recursos anuais nos catálogos oficiais e baixa ZIPs CSV, preservando URL, versão e SHA-256 |
 | Recorte | Casos de residência em RO, AC, AM, RR, PA, AP e TO |
 | Unidade | Município × semana epidemiológica brasileira |
-| Definição principal | Registro individual (`tp_not=2`), não descartado (`classi_fin` diferente de `2`) e não marcado como duplicata (`nduplic_n` diferente de `2`) |
-| Alvo alternativo | Casos confirmados (`classi_fin=1`) |
+| Definição principal | Registro individual (`tp_not=2`), não descartado pela classificação específica da doença, sem categoria final de outra arbovirose e sem duplicidade sinalizada (`nduplic_n=2`) |
+| Alvo alternativo | Códigos confirmados mapeados por doença |
 | Calendário | `sem_pri` como referência; `dt_sin_pri` como alternativa; semana brasileira de domingo a sábado |
 | Contexto | 52 semanas municipais e totais estaduais nas janelas de 1, 4, 12 e 52 semanas, sempre até 8 semanas antes da origem |
 | Saídas | Quatro horizontes diretos, com média, intervalos de 80%/95% e probabilidade de pelo menos um caso |
 | Geografia nova | Municípios com histórico usam embedding aprendido; município sem caso no treino usa uma categoria compartilhada de desconhecido |
 
-A definição principal segue a nota de casos prováveis dos catálogos do SUS: suspeitos notificados, excluídos os descartados. Valores em branco, ignorados ou inconclusivos não são tratados automaticamente como descartados. Os totais resultantes são notificações registradas; não estimam diretamente todas as infecções ocorridas.
+A definição principal segue a nota de casos prováveis dos catálogos do SUS: notificações individuais não descartadas. O mapeamento contempla os códigos `1`, `2` e `8` e o esquema combinado `5`, `10`–`13`: `2` e `5` são descartados; `13` é excluído de dengue por corresponder a chikungunya; `10`–`12` são excluídos de chikungunya por corresponderem a dengue. Valores em branco, ignorados ou inconclusivos não são automaticamente descartados. Códigos não mapeados interrompem a preparação para revisão. Os totais são notificações registradas; não estimam diretamente todas as infecções ocorridas.
 
 A lista do IBGE permite montar séries zeradas para municípios sem notificação no histórico, desde que a referência esteja disponível. Códigos Sinan de seis dígitos e códigos IBGE de sete dígitos são mantidos em campos separados. Se a referência do IBGE não puder ser obtida, o pipeline não consegue oferecer localidades ausentes de toda a série.
 
@@ -86,11 +80,13 @@ outputs/               modelos e previsões; ignorados pelo Git
 
 Dicionários originais e hashes: [docs/dictionaries](docs/dictionaries/README.md). Campos e regras: [docs/feature-engineering.md](docs/feature-engineering.md). A proposta metodológica, revisada para refletir a implementação, está em [Texto atual.md](Texto%20atual.md).
 
+O plano detalhado de validação e evolução está em [plano.md](plano.md); os resultados da execução registrada estão em [docs/initial-run-results.md](docs/initial-run-results.md).
+
 ## Próximas etapas
 
-1. Baixar um recorte piloto recente e conferir os nomes reais de colunas e formatos anuais.
-2. Revisar proporção de registros descartados, duplicatas, códigos não mapeados, falhas de data e divergências `sem_pri`/`dt_sin_pri`.
-3. Comparar o critério operacional de casos prováveis com a tabela anual e totais publicados pelo Ministério da Saúde.
-4. Ajustar a defasagem com distribuição observada de `dt_notific`/`dt_digita` e, se possível, snapshots arquivados.
-5. Rodar os baselines e uma primeira rede em CPU; conferir gráficos e intervalos por UF/doença antes de decisões sobre GPU, TCN ou atributos climáticos.
-6. Congelar a seleção após validação de 2025 e emitir a avaliação de 2026 apenas como parcial até a maturação do ano.
+1. Comparar contagens por doença/ano/UF com os totais oficiais e revisar o mapeamento de classificação por versão do formulário.
+2. Investigar as localidades sem correspondência no cadastro do IBGE e manter essa exclusão explícita no relatório de qualidade.
+3. Calibrar o atraso de oito semanas com `dt_notific`/`dt_digita` e snapshots arquivados, se disponíveis.
+4. Avaliar calibração dos intervalos e desempenho por horizonte/UF, levando em conta a grande quantidade de zeros e a dependência espacial.
+5. Considerar covariáveis climáticas e população somente após validar fontes, disponibilidade temporal e ganho em backtests.
+6. Tratar o teste de 2026 como parcial e retrospectivo até maturar o ano e obter snapshots que permitam avaliação prospectiva.

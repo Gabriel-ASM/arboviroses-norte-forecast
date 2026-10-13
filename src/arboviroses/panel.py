@@ -26,6 +26,26 @@ NORTH_UF_NAMES = {
     "16": "AP",
     "17": "TO",
 }
+CLASSIFICATION_CODES = {
+    "dengue": {
+        "discarded": {"2", "5"},
+        "other_disease": {"13"},
+        "confirmed": {"1", "10", "11", "12"},
+        "known": {"", "0", "1", "2", "5", "8", "9", "10", "11", "12", "13"},
+    },
+    "chikungunya": {
+        "discarded": {"2", "5"},
+        "other_disease": {"10", "11", "12"},
+        "confirmed": {"1", "13"},
+        "known": {"", "0", "1", "2", "5", "8", "9", "10", "11", "12", "13"},
+    },
+    "zika": {
+        "discarded": {"2"},
+        "other_disease": set(),
+        "confirmed": {"1"},
+        "known": {"", "0", "1", "2", "8", "9"},
+    },
+}
 NEEDED_COLUMNS = {
     "tp_not", "classi_fin", "id_mn_resi", "sem_pri", "dt_sin_pri", "nduplic_n"
 }
@@ -127,7 +147,15 @@ def _epi_columns(frame: pd.DataFrame, stats: Counter[str]) -> pd.DataFrame:
     from_sem = sem.map(parse_epi_code)
 
     date_values = frame.get("dt_sin_pri", pd.Series(pd.NA, index=frame.index, dtype="string"))
-    parsed_dates = pd.to_datetime(date_values, errors="coerce", dayfirst=True, format="mixed")
+    date_text = date_values.astype("string").str.strip()
+    iso_date = date_text.str.match(r"^\d{4}[-/]\d{1,2}[-/]\d{1,2}", na=False)
+    parsed_dates = pd.Series(pd.NaT, index=frame.index, dtype="datetime64[ns]")
+    parsed_dates.loc[iso_date] = pd.to_datetime(
+        date_text.loc[iso_date], errors="coerce", dayfirst=False, format="mixed"
+    )
+    parsed_dates.loc[~iso_date] = pd.to_datetime(
+        date_text.loc[~iso_date], errors="coerce", dayfirst=True, format="mixed"
+    )
     fallback: list[tuple[int, int] | None] = []
     for value in parsed_dates:
         fallback.append(None if pd.isna(value) else epi_from_date(value.date()))
@@ -150,6 +178,7 @@ def _prepare_chunk(
     disease: str,
     case_definition: str,
     stats: Counter[str],
+    registry_codes: set[str] | None = None,
 ) -> pd.DataFrame:
     frame = _normalize_columns(frame)
     required = {"tp_not", "classi_fin", "id_mn_resi"}
@@ -164,6 +193,19 @@ def _prepare_chunk(
     individual = tp == "2"
     stats["non_individual_or_unknown"] += int((~individual).sum())
     frame = frame.loc[individual].copy()
+
+    codes = _municipality_code(frame["id_mn_resi"])
+    north_code = codes.notna() & codes.str.len().eq(6) & codes.str[:2].isin(NORTH_UF_CODES)
+    stats["invalid_or_outside_north_residence"] += int((~north_code).sum())
+    if registry_codes is not None:
+        unmapped_code = north_code & ~codes.isin(registry_codes)
+    else:
+        unmapped_code = north_code & codes.str.endswith("000")
+    stats["unmapped_residence_municipality"] += int(unmapped_code.sum())
+    valid_code = north_code & ~unmapped_code
+    frame = frame.loc[valid_code].copy()
+    frame["municipality_code"] = codes.loc[valid_code]
+
     classification = (
         frame["classi_fin"].fillna("").astype("string").str.strip()
         .str.replace(r"\.0$", "", regex=True)
@@ -179,22 +221,26 @@ def _prepare_chunk(
         classification = classification.loc[~duplicate]
     else:
         stats["records_without_duplicate_flag"] += len(frame)
-    if case_definition == "probable":
-        discarded = classification == "2"
-        stats["discarded_cases"] += int(discarded.sum())
-        unknown = ~classification.isin({"", "0", "1", "2", "8", "9"})
+
+    mapping = CLASSIFICATION_CODES[disease]
+    unknown = ~classification.isin(mapping["known"])
+    if unknown.any():
+        unknown_counts = classification.loc[unknown].value_counts().to_dict()
         stats["unmapped_classification"] += int(unknown.sum())
-        frame = frame.loc[~discarded].copy()
+        raise ValueError(
+            f"Códigos de classi_fin sem mapeamento para {disease}: {unknown_counts}. "
+            "Revise o dicionário correspondente antes de contar esses registros."
+        )
+    if case_definition == "probable":
+        discarded = classification.isin(mapping["discarded"])
+        stats["discarded_cases"] += int(discarded.sum())
+        other_disease = classification.isin(mapping["other_disease"])
+        stats["other_disease_classification"] += int(other_disease.sum())
+        frame = frame.loc[~(discarded | other_disease)].copy()
     else:
-        confirmed = classification == "1"
+        confirmed = classification.isin(mapping["confirmed"])
         stats["not_confirmed"] += int((~confirmed).sum())
         frame = frame.loc[confirmed].copy()
-
-    codes = _municipality_code(frame["id_mn_resi"])
-    valid_code = codes.notna() & codes.str.len().eq(6) & codes.str[:2].isin(NORTH_UF_CODES)
-    stats["invalid_or_outside_north_residence"] += int((~valid_code).sum())
-    frame = frame.loc[valid_code].copy()
-    frame["municipality_code"] = codes.loc[valid_code]
 
     epi = _epi_columns(frame, stats)
     frame["epi_year"] = epi["epi_year"]
@@ -220,10 +266,16 @@ def build_weekly_panel(
     diseases: list[str],
     case_definition: str = "probable",
     registry_mode: str = "auto",
+    start_year: int = 2016,
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
     """Agrega os arquivos anuais já baixados em contagens de residência × semana."""
     if case_definition not in {"probable", "confirmed"}:
         raise ValueError("case_definition deve ser 'probable' ou 'confirmed'")
+    if start_year < 2016:
+        raise ValueError(
+            "A preparação comparável está validada a partir de 2016. "
+            "Os esquemas e códigos de classificação anteriores precisam de mapeamento histórico."
+        )
     manifest_path = raw_root / "manifest.json"
     if not manifest_path.exists():
         raise FileNotFoundError(f"Manifesto não encontrado: {manifest_path}; execute download primeiro.")
@@ -240,18 +292,31 @@ def build_weekly_panel(
         }
         manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     records = manifest.get("files", [])
+    registry_codes = (
+        set(registry["municipality_code_sinan"].astype("string").str.zfill(6))
+        if registry is not None
+        else None
+    )
     all_groups: list[pd.DataFrame] = []
     all_stats: dict[str, Any] = {}
+    source_coverage: dict[str, dict[str, int]] = {}
 
     for disease in diseases:
         stats: Counter[str] = Counter()
         sources = [
             item for item in records
-            if item.get("disease") == disease and (raw_root / item["file"]).exists()
+            if item.get("disease") == disease
+            and int(item["year"]) >= start_year
+            and (raw_root / item["file"]).exists()
         ]
         if not sources:
             raise FileNotFoundError(f"Nenhum arquivo baixado para {disease} em {raw_root}")
         years = {int(item["year"]) for item in sources}
+        source_coverage[disease] = {
+            "first_year": min(years),
+            "last_year": max(years),
+            "start_year_requested": start_year,
+        }
         missing_years = sorted(set(range(min(years), max(years) + 1)) - years)
         if missing_years:
             raise ValueError(
@@ -262,7 +327,9 @@ def build_weekly_panel(
         for source in sorted(sources, key=lambda item: item["year"]):
             path = raw_root / source["file"]
             for chunk in _read_archive(path):
-                partials.append(_prepare_chunk(chunk, disease, case_definition, stats))
+                partials.append(
+                    _prepare_chunk(chunk, disease, case_definition, stats, registry_codes)
+                )
         disease_panel = (
             pd.concat(partials, ignore_index=True)
             .groupby(["disease", "municipality_code", "uf", "epi_year", "epi_week"], as_index=False)["cases"]
@@ -285,6 +352,17 @@ def build_weekly_panel(
         "registry_mode": registry_mode,
         "warning": geography_warning,
         "source": "IBGE Localidades API" if registry is not None else "municípios observados no Sinan",
+    }
+    all_stats["_source_coverage"] = source_coverage
+    all_stats["_metadata"] = {
+        "case_definition": case_definition,
+        "start_year": start_year,
+        "diseases": sorted(diseases),
+        "panel_sha256": hashlib.sha256(output.read_bytes()).hexdigest(),
+        "classification_codes": {
+            disease: {name: sorted(values) for name, values in mapping.items()}
+            for disease, mapping in CLASSIFICATION_CODES.items()
+        },
     }
     stats_path.write_text(json.dumps(all_stats, ensure_ascii=False, indent=2), encoding="utf-8")
     return panel, all_stats
