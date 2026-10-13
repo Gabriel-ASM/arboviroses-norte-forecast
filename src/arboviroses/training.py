@@ -472,8 +472,12 @@ def write_skill_summary(reports: list[dict[str, Any]], output_root: Path) -> Pat
                 "reducao_mae_pct_vs_referencia": score["value_pct"],
                 "referencia": baseline_labels[score["reference_baseline"]],
                 "periodo_avaliado": score["evaluation_period"],
-                "mae_modelo": score["model_point_mae_cases_per_forecast_target"],
-                "mae_referencia": score["reference_point_mae_cases_per_forecast_target"],
+                "mae_modelo": round(
+                    score["model_point_mae_cases_per_forecast_target"], 4
+                ),
+                "mae_referencia": round(
+                    score["reference_point_mae_cases_per_forecast_target"], 4
+                ),
                 "pares_previsao_alvo": score["n_forecast_target_pairs"],
                 "status": score["status"],
             }
