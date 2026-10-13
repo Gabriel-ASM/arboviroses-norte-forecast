@@ -4,6 +4,27 @@ Pipeline em Python para estimar casos semanais de dengue, chikungunya e zika por
 
 **Execução em 12/10/2026:** 50 ZIPs anuais oficiais (cerca de 914 MB) foram baixados; o painel e os modelos usam a janela comum de 2016 a 2026 e incluem 450 municípios do Norte. No teste retrospectivo parcial até 2026-W32, a WAPE foi **86,5% para dengue, 100,5% para chikungunya e 100,1% para zika**. O teste foi consultado durante o desenvolvimento e não é uma avaliação independente. Dados, modelos, previsões e relatórios detalhados ficam em `data/` e `outputs/`, fora do Git; os resultados e sua interpretação estão em [docs/initial-run-results.md](docs/initial-run-results.md).
 
+## Visualização das previsões
+
+As figuras mostram a saída municipal da execução registrada, com origem em 04/10/2026 e previsões para as semanas epidemiológicas 41–44. Os valores são médias previstas; podem ser fracionários e não representam notificações observadas.
+
+![Mapa da média prevista de dengue por município da Região Norte, acumulada nas semanas epidemiológicas 41 a 44 de 2026](docs/assets/north_dengue_forecast.png)
+
+*O mapa agrega a previsão de dengue ao longo das quatro semanas e usa escala de cor logarítmica. Os limites municipais vêm da [Malha Territorial do IBGE](https://www.ibge.gov.br/geociencias/organizacao-do-territorio/malhas-territoriais/15774-malhas-territoriais.html), consultada em 12/10/2026. A geografia posiciona as previsões no mapa; clima, solo e cobertura da terra não são usados como atributos do modelo.*
+
+![Previsão regional semanal de dengue, chikungunya e zika, agregada a partir das médias previstas nos 450 municípios](docs/assets/regional_forecast_by_disease.png)
+
+*Cada painel tem escala vertical própria; compare os valores dentro de cada doença. Os totais semanais são a soma das médias previstas nos 450 municípios.*
+
+Para recriar as figuras com previsões locais em `outputs/forecasts/` e o cadastro municipal em `data/raw/`:
+
+```powershell
+python -m pip install -e ".[visuals]"
+python scripts/generate_readme_visuals.py --origin-date 2026-10-04
+```
+
+O script consulta somente as geometrias municipais do IBGE para desenhar o mapa; não baixa dados de casos.
+
 ## Uso
 
 Requer Python 3.11–3.14 e acesso à internet para baixar recursos do Ministério da Saúde e, na primeira preparação, a lista municipal oficial do IBGE. A instalação do PyTorch pode ser grande; use a instalação compatível com o hardware seguindo a [página oficial do PyTorch](https://pytorch.org/get-started/locally/).
