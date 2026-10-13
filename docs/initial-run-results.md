@@ -46,6 +46,24 @@ O melhor baseline de MAE foi a média móvel de quatro semanas para as três doe
 
 Esses resultados são retrospectivos e dependem dos dados atualmente publicados pelo Sinan. Não comprovam desempenho prospectivo nem superioridade geral. Como 2026 já foi usado para diagnóstico e ajustes do pipeline, reserve novos períodos maduros para a avaliação final das próximas versões.
 
+### O que esses erros significam
+
+O MAE abaixo é calculado usando a **média esperada** da distribuição, que pode ser fracionária. A coluna “erro mediano” informa o ponto em que metade dos erros absolutos fica abaixo e metade acima; o percentil 95 mostra a cauda de erros maiores.
+
+| Doença | Alvos com zero casos | MAE | Erro absoluto mediano | Erro absoluto no percentil 95 | Observado médio por alvo | Previsto médio por alvo |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Dengue | 63,8% | 2,16 | 0,68 | 8,34 | 1,97 | 1,93 |
+| Chikungunya | 95,1% | 0,172 | 0,030 | 0,896 | 0,115 | 0,132 |
+| Zika | 98,5% | 0,0346 | 0,010 | 0,081 | 0,0163 | 0,0203 |
+
+Há **14.400 município-semanas únicas** no recorte de teste (450 municípios × 32 semanas), com 28.424 notificações de dengue, 1.652 de chikungunya e 235 de zika. Cada município-semana aparece quatro vezes na avaliação, uma por horizonte de previsão. Assim, as 57.600 linhas por doença são previsões para os mesmos desfechos feitas em origens diferentes; não são 57.600 casos independentes.
+
+Em dengue, metade dos erros da média fica abaixo de um caso, mas 5% passa de 8,34 casos. Isso mostra a cauda longa: muitos alvos pequenos ou zerados convivem com alguns erros grandes, justamente os mais relevantes em períodos de surto. Para chikungunya e zika, os MAEs absolutos são menores principalmente porque quase todos os alvos são zero; isso, isoladamente, não significa que o modelo localize bem os episódios raros.
+
+Uma comparação agregada ajuda a ver os erros que se cancelam: a média prevista por alvo fica cerca de 2% abaixo do observado em dengue, 15% acima em chikungunya e 24% acima em zika. Isso não quer dizer que os municípios e semanas estejam certos. Definindo a soma dos erros absolutos dividida pela soma dos casos observados (WAPE), obtêm-se aproximadamente 110%, 150% e 212%, respectivamente. É possível aproximar o total geral e errar a distribuição no território e no tempo: por exemplo, prever 0 onde ocorreram 3 casos e prever 6 onde ocorreram 3 deixa o total empatado, embora some 6 casos de erro absoluto.
+
+Para divulgação, a formulação segura é: **o MLP melhora as métricas probabilísticas WIS e RMSE neste teste retrospectivo, mas não reduz o MAE frente aos baselines simples; os erros locais se concentram em séries esparsas e têm uma cauda importante em dengue.** As coberturas acima do nominal também indicam que é preciso verificar se os intervalos não estão largos demais. O recorte parcial de 2026 já participou do diagnóstico do pipeline e não deve ser apresentado como avaliação final independente.
+
 ## Previsões emitidas
 
 A origem mais recente compatível com a maturidade registrada foi 04/10/2026 (semana epidemiológica 40). Foram geradas 1.800 linhas municipais por doença (450 municípios × quatro semanas) e 28 linhas por doença para as sete UFs × quatro semanas. As saídas têm valores finitos e não negativos, com limites inferiores menores ou iguais aos superiores.
